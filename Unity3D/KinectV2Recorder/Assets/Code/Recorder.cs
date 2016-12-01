@@ -1,6 +1,7 @@
 ﻿using UnityEngine;
 using System.Collections;
 using Windows.Kinect;
+using System.Threading;
 
 public class Recorder : MonoBehaviour {
 
@@ -46,14 +47,51 @@ public class Recorder : MonoBehaviour {
         depthPixelData = new byte[DepthTexture.width * DepthTexture.height * 4];
         GameObject.Find( "Depth" ).GetComponent<MeshRenderer>().material.mainTexture = DepthTexture;
 
-        mapper = sensor.CoordinateMapper;        
+        mapper = sensor.CoordinateMapper;                
         reader = sensor.OpenMultiSourceFrameReader( FrameSourceTypes.Depth | FrameSourceTypes.Color | FrameSourceTypes.BodyIndex );
         
         reader.MultiSourceFrameArrived += Reader_MultiSourceFrameArrived;
 
+        var depthThread = new Thread( new ThreadStart( renderDepthFrame ) );
+        //depthThread.Start();
     }
 
-    private void Reader_MultiSourceFrameArrived( object sender, MultiSourceFrameArrivedEventArgs e ) {
+    bool newDepthFrame = false;
+    ushort minDepth = 500;
+    ushort maxDepth = 4500;
+    private void renderDepthFrame() {
+        while(true) {
+            if( newDepthFrame ) {
+                int colorIndex = 0;
+                for ( int depthIndex = 0; depthIndex < depthData.Length; ++depthIndex ) {
+                    ushort depth = depthData[depthIndex];
+                    byte intensity = (byte)( depth >= minDepth && depth <= maxDepth ? depth : (byte)0 );
+
+                    depthPixelData[colorIndex++] = intensity; // Blue
+                    depthPixelData[colorIndex++] = intensity; // Green
+                    depthPixelData[colorIndex++] = intensity; // Red
+
+                    ++colorIndex;
+                }
+
+
+
+                newDepthFrame = false;
+            }
+        }    
+    }
+
+    private void renderColorFrame() {
+
+    }
+
+    private void renderIndexFrame() {
+
+    }
+
+
+
+    unsafe void Reader_MultiSourceFrameArrived( object sender, MultiSourceFrameArrivedEventArgs e ) {
         var frame = e.FrameReference.AcquireFrame();
         if( frame == null ) {
             Debug.Log( "Frame expired" );
@@ -62,31 +100,18 @@ public class Recorder : MonoBehaviour {
 
         using ( var depthFrame = frame.DepthFrameReference.AcquireFrame() ) {
             depthFrame.CopyFrameDataToArray( depthData );
-
-            ushort minDepth = depthFrame.DepthMinReliableDistance;
-            ushort maxDepth = depthFrame.DepthMaxReliableDistance;
-
-            int colorIndex = 0;
-            for ( int depthIndex = 0; depthIndex < depthData.Length; ++depthIndex ) {
-                ushort depth = depthData[depthIndex];
-                byte intensity = (byte)( depth >= minDepth && depth <= maxDepth ? depth : (byte)0 );
-
-                depthPixelData[colorIndex++] = intensity; // Blue
-                depthPixelData[colorIndex++] = intensity; // Green
-                depthPixelData[colorIndex++] = intensity; // Red
-
-                ++colorIndex;
-            }
             
+            newDepthFrame = true;
+
             DepthTexture.LoadRawTextureData( depthPixelData );
             DepthTexture.Apply();
-
         }
         
         using ( var colorFrame = frame.ColorFrameReference.AcquireFrame() ) {
-            colorFrame.CopyConvertedFrameDataToArray( colorData, ColorImageFormat.Rgba );
+            colorFrame.CopyConvertedFrameDataToArray( colorData, ColorImageFormat.Rgba );           
+                       
             ColorTexture.LoadRawTextureData( colorData );
-            ColorTexture.Apply();            
+            ColorTexture.Apply();
         }
 
         using ( var indexFrame = frame.BodyIndexFrameReference.AcquireFrame() ) {
