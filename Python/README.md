@@ -1,0 +1,1 @@
+show.py reads the recorded Kinect data and displays it using MATPLOTLIB / NUMPY
