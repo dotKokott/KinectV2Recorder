@@ -32,6 +32,9 @@ public class Recorder : MonoBehaviour {
 
     public SaveQueue Queue;
 
+    public int SaveEveryXFrame = 10;
+    private int currentFrame = 0;
+
     void Start() {
         sensor = KinectSensor.GetDefault();
         sensor.Open();
@@ -83,17 +86,17 @@ public class Recorder : MonoBehaviour {
     private void renderDepthFrame() {
         while ( runDepthThread ) {
             if ( newDepthFrame ) {
-                int colorIndex = 0;
-                for ( int depthIndex = 0; depthIndex < depthData.Length; ++depthIndex ) {
-                    ushort depth = depthData[depthIndex];
-                    byte intensity = (byte)( depth >= minDepth && depth <= maxDepth ? depth : (byte)0 );
+                //int colorIndex = 0;
+                //for ( int depthIndex = 0; depthIndex < depthData.Length; ++depthIndex ) {
+                //    ushort depth = depthData[depthIndex];
+                //    byte intensity = (byte)( depth >= minDepth && depth <= maxDepth ? depth : (byte)0 );
 
-                    depthPixelData[colorIndex++] = intensity; // Blue
-                    depthPixelData[colorIndex++] = intensity; // Green
-                    depthPixelData[colorIndex++] = intensity; // Red
+                //    depthPixelData[colorIndex++] = intensity; // Blue
+                //    depthPixelData[colorIndex++] = intensity; // Green
+                //    depthPixelData[colorIndex++] = intensity; // Red
 
-                    ++colorIndex;
-                }
+                //    ++colorIndex;   
+                //}
 
                 //mapper.MapDepthFrameToColorSpace( depthData, points );
                 //Array.Clear( output, 0, output.Length );
@@ -123,10 +126,20 @@ public class Recorder : MonoBehaviour {
     }
 
     unsafe void Reader_MultiSourceFrameArrived( object sender, MultiSourceFrameArrivedEventArgs e ) {
+        currentFrame++;
+        if ( currentFrame % SaveEveryXFrame != 0 ) return;
+
         var frame = e.FrameReference.AcquireFrame();
         if ( frame == null ) {
             Debug.Log( "Frame expired" );
             return;
+        }
+
+        using ( var colorFrame = frame.ColorFrameReference.AcquireFrame() ) {
+            colorFrame.CopyConvertedFrameDataToArray( colorData, ColorImageFormat.Rgba );
+
+            ColorTexture.LoadRawTextureData( colorData );
+            ColorTexture.Apply();
         }
 
         using ( var depthFrame = frame.DepthFrameReference.AcquireFrame() ) {
@@ -141,12 +154,7 @@ public class Recorder : MonoBehaviour {
             TrackedColorTexture.Apply();
         }
 
-        using ( var colorFrame = frame.ColorFrameReference.AcquireFrame() ) {
-            colorFrame.CopyConvertedFrameDataToArray( colorData, ColorImageFormat.Rgba );
 
-            ColorTexture.LoadRawTextureData( colorData );
-            ColorTexture.Apply();
-        }
 
         using ( var indexFrame = frame.BodyIndexFrameReference.AcquireFrame() ) {
             indexFrame.CopyFrameDataToArray( indexData );
@@ -170,7 +178,7 @@ public class Recorder : MonoBehaviour {
 
                 Debug.Log( "Stopping recorder" );
             } else {
-                Queue = new SaveQueue(mapper);
+                Queue = new SaveQueue( mapper );
 
                 Debug.Log( "started recorder" );
             }
@@ -191,7 +199,7 @@ public class Recorder : MonoBehaviour {
 }
 
 public abstract class RecordingSaver<T> {
-    public Queue<T> Frames;
+    public Queue<PoolEntry<T>> Frames;
 
     public int CurrentFrame = 0;
 
@@ -204,7 +212,7 @@ public abstract class RecordingSaver<T> {
     public Thread Worker;
 
     public RecordingSaver( string path, string type ) {
-        Frames = new Queue<T>();
+        Frames = new Queue<PoolEntry<T>>();
 
         CurrentDirectory = Path.Combine( path, type );
         if ( !Directory.Exists( CurrentDirectory ) ) Directory.CreateDirectory( CurrentDirectory );
@@ -235,20 +243,25 @@ public abstract class RecordingSaver<T> {
     }
 }
 
-public class ColorSaver : RecordingSaver<byte[]> {
+public class ColorSaver : RecordingSaver<byte> {
+
+    private System.Random rand = new System.Random();
 
     public ColorSaver( string path ) : base( path, "COLOR" ) {
 
     }
+
     public override void saveNextFrame() {
         var frame = Frames.Dequeue();
 
         var colorFramePath = Path.Combine( CurrentDirectory, CurrentFrame.ToString() + ".uint8" );
-        File.WriteAllBytes( colorFramePath, frame );
+        File.WriteAllBytes( colorFramePath, frame.Resource );
+
+        frame.Free();
     }
 }
 
-public class DepthSaver : RecordingSaver<ushort[]> {
+public class DepthSaver : RecordingSaver<ushort> {
     public DepthSaver( string path ) : base( path, "DEPTH" ) { }
 
     public override void saveNextFrame() {
@@ -257,15 +270,18 @@ public class DepthSaver : RecordingSaver<ushort[]> {
         var depthFramePath = Path.Combine( CurrentDirectory, CurrentFrame.ToString() + ".uint16" );
         using ( FileStream fs = new FileStream( depthFramePath, FileMode.CreateNew, FileAccess.Write ) ) {
             using ( BinaryWriter bw = new BinaryWriter( fs ) ) {
-                foreach ( short value in frame ) {
+                var res = frame.Resource;
+                foreach ( short value in res ) {
                     bw.Write( value );
                 }
             }
         }
+
+        frame.Free();
     }
 }
 
-public class IndexSaver : RecordingSaver<byte[]> {
+public class IndexSaver : RecordingSaver<byte> {
 
     public IndexSaver( string path ) : base( path, "INDEX" ) { }
 
@@ -273,13 +289,15 @@ public class IndexSaver : RecordingSaver<byte[]> {
         var frame = Frames.Dequeue();
 
         var indexFramePath = Path.Combine( CurrentDirectory, CurrentFrame.ToString() + ".uint8" );
-        File.WriteAllBytes( indexFramePath, frame );
+        File.WriteAllBytes( indexFramePath, frame.Resource );
+
+        frame.Free();
     }
 }
 
-public class TrackedColorSaver : RecordingSaver<ushort[]> {
+public class TrackedColorSaver : RecordingSaver<ushort> {
 
-    public Queue<byte[]> ColorFrames;
+    public Queue<PoolEntry<byte>> ColorFrames;
 
     private CoordinateMapper mapper;
 
@@ -289,28 +307,29 @@ public class TrackedColorSaver : RecordingSaver<ushort[]> {
     public static int COLOR_WIDTH = 1920;
     public static int COLOR_HEIGHT = 1080;
 
-    private ColorSpacePoint[] points;   
+    private ColorSpacePoint[] points;
     private byte[] output;
 
     public TrackedColorSaver( string path, CoordinateMapper coordinateMapper ) : base( path, "TRACKEDCOLOR" ) {
-        ColorFrames = new Queue<byte[]>();
-        mapper = coordinateMapper;        
+        ColorFrames = new Queue<PoolEntry<byte>>();
+        mapper = coordinateMapper;
 
         points = new ColorSpacePoint[DEPTH_WIDTH * DEPTH_HEIGHT];
         output = new byte[DEPTH_WIDTH * DEPTH_HEIGHT * 4];
 
     }
 
-    public void AddFrame(ushort[] depth, byte[] color) {
+    public void AddFrame( PoolEntry<ushort> depth, PoolEntry<byte> color ) {
         Frames.Enqueue( depth );
         ColorFrames.Enqueue( color );
     }
 
     public override void saveNextFrame() {
-        var frame = Frames.Dequeue();
-        var colorFrame = ColorFrames.Dequeue();
+        var entry = Frames.Dequeue();
+        var colorEntry = ColorFrames.Dequeue();
+        var colorFrame = colorEntry.Resource;
 
-        mapper.MapDepthFrameToColorSpace( frame, points );
+        mapper.MapDepthFrameToColorSpace( entry.Resource, points );
 
         Array.Clear( output, 0, output.Length );
         for ( var y = 0; y < DEPTH_HEIGHT; y++ ) {
@@ -322,7 +341,7 @@ public class TrackedColorSaver : RecordingSaver<ushort[]> {
 
                 if ( ( colorX >= 0 ) && ( colorX < COLOR_WIDTH ) && ( colorY >= 0 ) && ( colorY < COLOR_HEIGHT ) ) {
                     int colorIndex = ( ( colorY * COLOR_WIDTH ) + colorX ) * 4;
-                    int displayIndex = depthIndex * 4;                    
+                    int displayIndex = depthIndex * 4;
 
                     output[displayIndex + 0] = colorFrame[colorIndex];
                     output[displayIndex + 1] = colorFrame[colorIndex + 1];
@@ -333,8 +352,11 @@ public class TrackedColorSaver : RecordingSaver<ushort[]> {
             }
         }
 
-        var trackedFramePath = Path.Combine( CurrentDirectory, CurrentFrame.ToString() + ".uint8" );        
+        var trackedFramePath = Path.Combine( CurrentDirectory, CurrentFrame.ToString() + ".uint8" );
         File.WriteAllBytes( trackedFramePath, output );
+
+        entry.Free();
+        colorEntry.Free();
     }
 }
 
@@ -348,6 +370,10 @@ public class SaveQueue {
     private IndexSaver index;
     private TrackedColorSaver tracked;
 
+    private ArrayPool<byte> colorPool;
+    private ArrayPool<ushort> depthPool;
+    private ArrayPool<byte> indexPool;
+
     public SaveQueue( CoordinateMapper mapper ) {
         if ( !Directory.Exists( BASE_PATH ) ) Directory.CreateDirectory( BASE_PATH );
         CurrentPath = Path.Combine( BASE_PATH, DateTime.Now.ToString().Replace( ':', '_' ).Replace( '/', '_' ) );
@@ -357,20 +383,25 @@ public class SaveQueue {
         depth = new DepthSaver( CurrentPath );
         index = new IndexSaver( CurrentPath );
         tracked = new TrackedColorSaver( CurrentPath, mapper );
+
+        colorPool = new ArrayPool<byte>( 1920 * 1080 * 4, 10 );
+        depthPool = new ArrayPool<ushort>( 512 * 424, 10 );
+        indexPool = new ArrayPool<byte>( 512 * 424, 10 );
     }
 
     public void AddFrame( byte[] colorData, ushort[] depthData, byte[] indexData ) {
-        var _color = new byte[colorData.Length];
-        var _depth = new ushort[depthData.Length];
-        var _index = new byte[indexData.Length];
-
-        colorData.CopyTo( _color, 0 );
-        depthData.CopyTo( _depth, 0 );
-        indexData.CopyTo( _index, 0 );
-         
+        var _color = colorPool.RequestResource( 2 );
+        colorData.CopyTo( _color.Resource, 0 );
         color.Frames.Enqueue( _color );
+
+        var _depth = depthPool.RequestResource( 2 );
+        depthData.CopyTo( _depth.Resource, 0 );
         depth.Frames.Enqueue( _depth );
+
+        var _index = indexPool.RequestResource( 1 );                
+        indexData.CopyTo( _index.Resource, 0 );
         index.Frames.Enqueue( _index );
+
         tracked.AddFrame( _depth, _color );
     }
 
@@ -379,6 +410,6 @@ public class SaveQueue {
     }
 
     public void HardStop() {
-        color.HardStop = depth.HardStop = index.HardStop = tracked.SoftStop = true;
+        color.HardStop = depth.HardStop = index.HardStop = tracked.HardStop = true;
     }
 }

@@ -6,13 +6,14 @@ from scipy import misc
 import argparse
 import os
 
-parser = argparse.ArgumentParser(description='Display recorded Kinect data')
+parser = argparse.ArgumentParser(description='Display recorded Kinect data', fromfile_prefix_chars="@")
 parser.add_argument('-p', dest='recording_path', action='store', type=str, default="", help="Which recording do you want to display?")
 parser.add_argument('-f', dest='frame', action='store', type=int, default=0, help='Which frame do you want to display')
 
 args = parser.parse_args()
 frame = args.frame
-recording_path = args.recording_path.strip(os.sep).strip('"')
+
+recording_path = args.recording_path.strip(os.sep)
 
 #COLOR
 color = np.fromfile(os.path.join(recording_path, 'COLOR', '%d.uint8' % frame), dtype=np.uint8)
