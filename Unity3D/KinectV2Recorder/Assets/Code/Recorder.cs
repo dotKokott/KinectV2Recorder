@@ -30,6 +30,15 @@ public class Recorder : MonoBehaviour {
     public static int INDEX_HEIGHT = 424;
     public static int INDEX_LENGTH = INDEX_WIDTH * INDEX_HEIGHT;
 
+    public static int COLOR_WIDTH = 1920;
+    public static int COLOR_HEIGHT = 1080;
+    public static int COLOR_LENGTH = COLOR_WIDTH * COLOR_HEIGHT;
+    public static int COLOR_SIZE = COLOR_LENGTH * 4;
+
+    public static int DEPTH_WIDTH = 512;
+    public static int DEPTH_HEIGHT = 424;
+    public static int DEPTH_LENGTH = DEPTH_HEIGHT * DEPTH_WIDTH;
+
     public SaveQueue Queue;
 
     public int SaveEveryXFrame = 10;
@@ -61,11 +70,11 @@ public class Recorder : MonoBehaviour {
 
         GameObject.Find( "Depth" ).GetComponent<MeshRenderer>().material.mainTexture = DepthTexture;
 
-        TrackedColorTexture = new Texture2D( 512, 424, TextureFormat.RGBA32, false );
+        TrackedColorTexture = new Texture2D( DEPTH_WIDTH, DEPTH_HEIGHT, TextureFormat.RGBA32, false );
         TrackedColorTexture.hideFlags = HideFlags.HideAndDontSave;
         TrackedColorTexture.Apply();
-        points = new ColorSpacePoint[512 * 424];
-        output = new byte[512 * 424 * 4];
+        points = new ColorSpacePoint[DEPTH_LENGTH];
+        output = new byte[DEPTH_LENGTH * 4];
 
         GameObject.Find( "Tracked" ).GetComponent<MeshRenderer>().material.mainTexture = TrackedColorTexture;
 
@@ -130,10 +139,7 @@ public class Recorder : MonoBehaviour {
         if ( currentFrame % SaveEveryXFrame != 0 ) return;
 
         var frame = e.FrameReference.AcquireFrame();
-        if ( frame == null ) {
-            Debug.Log( "Frame expired" );
-            return;
-        }
+        if ( frame == null ) return;
 
         using ( var colorFrame = frame.ColorFrameReference.AcquireFrame() ) {
             colorFrame.CopyConvertedFrameDataToArray( colorData, ColorImageFormat.Rgba );
@@ -153,8 +159,6 @@ public class Recorder : MonoBehaviour {
             TrackedColorTexture.LoadRawTextureData( output );
             TrackedColorTexture.Apply();
         }
-
-
 
         using ( var indexFrame = frame.BodyIndexFrameReference.AcquireFrame() ) {
             indexFrame.CopyFrameDataToArray( indexData );
@@ -194,7 +198,7 @@ public class Recorder : MonoBehaviour {
         Thread.Sleep( 100 );
 
         reader.Dispose();
-        sensor.Close();
+        sensor.Close();        
     }
 }
 
@@ -240,6 +244,8 @@ public abstract class RecordingSaver<T> {
             CurrentFrame++;
             Thread.Sleep( THREAD_SLEEP_TIME );
         }
+
+        Frames.Clear();
     }
 }
 
@@ -301,12 +307,6 @@ public class TrackedColorSaver : RecordingSaver<ushort> {
 
     private CoordinateMapper mapper;
 
-    public static int DEPTH_WIDTH = 512;
-    public static int DEPTH_HEIGHT = 424;
-
-    public static int COLOR_WIDTH = 1920;
-    public static int COLOR_HEIGHT = 1080;
-
     private ColorSpacePoint[] points;
     private byte[] output;
 
@@ -314,9 +314,8 @@ public class TrackedColorSaver : RecordingSaver<ushort> {
         ColorFrames = new Queue<PoolEntry<byte>>();
         mapper = coordinateMapper;
 
-        points = new ColorSpacePoint[DEPTH_WIDTH * DEPTH_HEIGHT];
-        output = new byte[DEPTH_WIDTH * DEPTH_HEIGHT * 4];
-
+        points = new ColorSpacePoint[Recorder.DEPTH_LENGTH];
+        output = new byte[Recorder.DEPTH_LENGTH * 4];
     }
 
     public void AddFrame( PoolEntry<ushort> depth, PoolEntry<byte> color ) {
@@ -332,15 +331,15 @@ public class TrackedColorSaver : RecordingSaver<ushort> {
         mapper.MapDepthFrameToColorSpace( entry.Resource, points );
 
         Array.Clear( output, 0, output.Length );
-        for ( var y = 0; y < DEPTH_HEIGHT; y++ ) {
-            for ( var x = 0; x < DEPTH_WIDTH; x++ ) {
-                int depthIndex = x + ( y * DEPTH_WIDTH );
+        for ( var y = 0; y < Recorder.DEPTH_HEIGHT; y++ ) {
+            for ( var x = 0; x < Recorder.DEPTH_WIDTH; x++ ) {
+                int depthIndex = x + ( y * Recorder.DEPTH_WIDTH );
                 var cPoint = points[depthIndex];
                 int colorX = (int)Math.Floor( cPoint.X + 0.5 );
                 int colorY = (int)Math.Floor( cPoint.Y + 0.5 );
 
-                if ( ( colorX >= 0 ) && ( colorX < COLOR_WIDTH ) && ( colorY >= 0 ) && ( colorY < COLOR_HEIGHT ) ) {
-                    int colorIndex = ( ( colorY * COLOR_WIDTH ) + colorX ) * 4;
+                if ( ( colorX >= 0 ) && ( colorX < Recorder.COLOR_WIDTH ) && ( colorY >= 0 ) && ( colorY < Recorder.COLOR_HEIGHT ) ) {
+                    int colorIndex = ( ( colorY * Recorder.COLOR_WIDTH ) + colorX ) * 4;
                     int displayIndex = depthIndex * 4;
 
                     output[displayIndex + 0] = colorFrame[colorIndex];
@@ -384,9 +383,9 @@ public class SaveQueue {
         index = new IndexSaver( CurrentPath );
         tracked = new TrackedColorSaver( CurrentPath, mapper );
 
-        colorPool = new ArrayPool<byte>( 1920 * 1080 * 4, 10 );
-        depthPool = new ArrayPool<ushort>( 512 * 424, 10 );
-        indexPool = new ArrayPool<byte>( 512 * 424, 10 );
+        colorPool = new ArrayPool<byte>( Recorder.COLOR_SIZE, 50 );
+        depthPool = new ArrayPool<ushort>( Recorder.DEPTH_LENGTH, 50 );
+        indexPool = new ArrayPool<byte>( Recorder.DEPTH_LENGTH, 50 );
     }
 
     public void AddFrame( byte[] colorData, ushort[] depthData, byte[] indexData ) {
@@ -398,7 +397,7 @@ public class SaveQueue {
         depthData.CopyTo( _depth.Resource, 0 );
         depth.Frames.Enqueue( _depth );
 
-        var _index = indexPool.RequestResource( 1 );                
+        var _index = indexPool.RequestResource( 1 );
         indexData.CopyTo( _index.Resource, 0 );
         index.Frames.Enqueue( _index );
 
@@ -406,10 +405,22 @@ public class SaveQueue {
     }
 
     public void SoftStop() {
+        colorPool.Dispose();
+        depthPool.Dispose();
+        indexPool.Dispose();
+
         color.SoftStop = depth.SoftStop = index.SoftStop = tracked.SoftStop = true;
+
+        GC.Collect();
     }
 
     public void HardStop() {
+        colorPool.Dispose();
+        depthPool.Dispose();
+        indexPool.Dispose();
+
         color.HardStop = depth.HardStop = index.HardStop = tracked.HardStop = true;
+
+        GC.Collect();
     }
 }

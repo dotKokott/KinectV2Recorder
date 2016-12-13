@@ -18,9 +18,9 @@ public class PoolEntry<T> {
 
     public void Free() {
         Interlocked.Decrement( ref LockCount );
-    }    
+    }
 }
-public class ArrayPool<T> {
+public class ArrayPool<T> : IDisposable {
 
     public List<PoolEntry<T>> Resources;
     public int SizePerArray;
@@ -36,7 +36,7 @@ public class ArrayPool<T> {
         }
     }
 
-    public PoolEntry<T> AddEmptyItem(int lockCount = 0) {
+    public PoolEntry<T> AddEmptyItem( int lockCount = 0 ) {
         var arr = new T[SizePerArray];
         var entry = new PoolEntry<T>( arr, lockCount );
         Resources.Add( entry );
@@ -51,7 +51,7 @@ public class ArrayPool<T> {
                 res.LockCount = lockCount;
 
                 return res;
-            }        
+            }
         }
 
         Debug.LogFormat( "Out of resources for {0}, new size {1}", this.ToString(), Resources.Count + GrowStep );
@@ -66,4 +66,38 @@ public class ArrayPool<T> {
 
         return newEntry;
     }
+
+    #region IDisposable Support
+    private bool disposedValue = false; // To detect redundant calls
+
+    protected virtual void Dispose( bool disposing ) {
+        if ( !disposedValue ) {
+            if ( disposing ) {
+
+            }
+
+            foreach ( var res in Resources ) {
+                res.Resource = null;
+            }
+
+            Resources.Clear();
+
+            disposedValue = true;
+        }
+    }
+
+    // TODO: override a finalizer only if Dispose(bool disposing) above has code to free unmanaged resources.
+    // ~ArrayPool() {
+    //   // Do not change this code. Put cleanup code in Dispose(bool disposing) above.
+    //   Dispose(false);
+    // }
+
+    // This code added to correctly implement the disposable pattern.
+    public void Dispose() {
+        // Do not change this code. Put cleanup code in Dispose(bool disposing) above.
+        Dispose( true );
+        // TODO: uncomment the following line if the finalizer is overridden above.
+        // GC.SuppressFinalize(this);
+    }
+    #endregion
 }
