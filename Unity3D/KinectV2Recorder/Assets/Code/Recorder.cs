@@ -1,5 +1,4 @@
 ﻿using UnityEngine;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using Windows.Kinect;
@@ -41,18 +40,33 @@ public class Recorder : MonoBehaviour {
 
     public SaveQueue Queue;
 
-    public int SaveEveryXFrame = 10;
     private int currentFrame = 0;
 
+    public int SaveXFramesPerSecond = 10;
+    private int saveEveryXFrame { get { return 30 / SaveXFramesPerSecond; } }
+
+    public GameObject ColorPlane;
+    public GameObject DepthPlane;
+    public GameObject IndexPlane;
+    public GameObject ColorOnDepthPlane;
+    private bool recordColorFrame = true;
+    private bool recordDepthFrame = true;
+    private bool recordIndexFrame = true;
+    private bool recordColorOnDepthFrame = true;
+
     void Start() {
+        ColorPlane = GameObject.Find( "Color" );
+        DepthPlane = GameObject.Find( "Depth" );
+        IndexPlane = GameObject.Find( "BodyIndex" );
+        ColorOnDepthPlane = GameObject.Find( "ColorOnDepth" );
+
         sensor = KinectSensor.GetDefault();
         sensor.Open();
 
-        BodyIndexTexture = new Texture2D( INDEX_WIDTH, INDEX_HEIGHT, TextureFormat.Alpha8, false );
-        BodyIndexTexture.hideFlags = HideFlags.HideAndDontSave;
-        BodyIndexTexture.Apply();
-        indexData = new byte[INDEX_WIDTH * INDEX_HEIGHT];
-        GameObject.Find( "BodyIndex" ).GetComponent<MeshRenderer>().material.mainTexture = BodyIndexTexture;
+        mapper = sensor.CoordinateMapper;
+
+        reader = sensor.OpenMultiSourceFrameReader( FrameSourceTypes.Depth | FrameSourceTypes.Color | FrameSourceTypes.BodyIndex );
+        reader.MultiSourceFrameArrived += Reader_MultiSourceFrameArrived;
 
 
         ColorTexture = new Texture2D( sensor.ColorFrameSource.FrameDescription.Width, sensor.ColorFrameSource.FrameDescription.Height, TextureFormat.RGBA32, false );
@@ -60,7 +74,7 @@ public class Recorder : MonoBehaviour {
         ColorTexture.Apply();
         colorData = new byte[ColorTexture.width * ColorTexture.height * 4];
 
-        GameObject.Find( "Color" ).GetComponent<MeshRenderer>().material.mainTexture = ColorTexture;
+        ColorPlane.GetComponent<MeshRenderer>().material.mainTexture = ColorTexture;
 
         DepthTexture = new Texture2D( sensor.DepthFrameSource.FrameDescription.Width, sensor.DepthFrameSource.FrameDescription.Height, TextureFormat.RGBA32, false );
         DepthTexture.hideFlags = HideFlags.HideAndDontSave;
@@ -68,7 +82,13 @@ public class Recorder : MonoBehaviour {
         depthData = new ushort[DepthTexture.width * DepthTexture.height];
         depthPixelData = new byte[DepthTexture.width * DepthTexture.height * 4];
 
-        GameObject.Find( "Depth" ).GetComponent<MeshRenderer>().material.mainTexture = DepthTexture;
+        DepthPlane.GetComponent<MeshRenderer>().material.mainTexture = DepthTexture;
+
+        BodyIndexTexture = new Texture2D( INDEX_WIDTH, INDEX_HEIGHT, TextureFormat.Alpha8, false );
+        BodyIndexTexture.hideFlags = HideFlags.HideAndDontSave;
+        BodyIndexTexture.Apply();
+        indexData = new byte[INDEX_WIDTH * INDEX_HEIGHT];
+        IndexPlane.GetComponent<MeshRenderer>().material.mainTexture = BodyIndexTexture;
 
         TrackedColorTexture = new Texture2D( DEPTH_WIDTH, DEPTH_HEIGHT, TextureFormat.RGBA32, false );
         TrackedColorTexture.hideFlags = HideFlags.HideAndDontSave;
@@ -76,15 +96,14 @@ public class Recorder : MonoBehaviour {
         points = new ColorSpacePoint[DEPTH_LENGTH];
         output = new byte[DEPTH_LENGTH * 4];
 
-        GameObject.Find( "Tracked" ).GetComponent<MeshRenderer>().material.mainTexture = TrackedColorTexture;
+        ColorOnDepthPlane.GetComponent<MeshRenderer>().material.mainTexture = TrackedColorTexture;
 
-        mapper = sensor.CoordinateMapper;
-        reader = sensor.OpenMultiSourceFrameReader( FrameSourceTypes.Depth | FrameSourceTypes.Color | FrameSourceTypes.BodyIndex );
-
-        reader.MultiSourceFrameArrived += Reader_MultiSourceFrameArrived;
 
         depthThread = new Thread( new ThreadStart( renderDepthFrame ) );
         depthThread.Start();
+
+        colorOnDepthThread = new Thread( new ThreadStart( renderColorOnDepthThread ) );
+        colorOnDepthThread.Start();
     }
 
     Thread depthThread;
@@ -95,48 +114,72 @@ public class Recorder : MonoBehaviour {
     private void renderDepthFrame() {
         while ( runDepthThread ) {
             if ( newDepthFrame ) {
-                //int colorIndex = 0;
-                //for ( int depthIndex = 0; depthIndex < depthData.Length; ++depthIndex ) {
-                //    ushort depth = depthData[depthIndex];
-                //    byte intensity = (byte)( depth >= minDepth && depth <= maxDepth ? depth : (byte)0 );
+                int colorIndex = 0;
+                for ( int depthIndex = 0; depthIndex < depthData.Length; ++depthIndex ) {
+                    ushort depth = depthData[depthIndex];
+                    byte intensity = (byte)( depth >= minDepth && depth <= maxDepth ? depth : (byte)0 );
 
-                //    depthPixelData[colorIndex++] = intensity; // Blue
-                //    depthPixelData[colorIndex++] = intensity; // Green
-                //    depthPixelData[colorIndex++] = intensity; // Red
+                    depthPixelData[colorIndex++] = intensity; // Blue
+                    depthPixelData[colorIndex++] = intensity; // Green
+                    depthPixelData[colorIndex++] = intensity; // Red
 
-                //    ++colorIndex;   
-                //}
-
-                //mapper.MapDepthFrameToColorSpace( depthData, points );
-                //Array.Clear( output, 0, output.Length );
-                //for ( var y = 0; y < 424; y++ ) {
-                //    for ( var x = 0; x < 512; x++ ) {
-                //        int depthIndex = x + ( y * 512 );
-                //        var cPoint = points[depthIndex];
-                //        int colorX = (int)Math.Floor( cPoint.X + 0.5 );
-                //        int colorY = (int)Math.Floor( cPoint.Y + 0.5 );
-
-                //        if ( ( colorX >= 0 ) && ( colorX < 1920 ) && ( colorY >= 0 ) && ( colorY < 1080 ) ) {
-                //            int ci = ( ( colorY * 1920 ) + colorX ) * 4;
-                //            int displayIndex = depthIndex * 4;
-
-                //            output[displayIndex + 0] = colorData[ci];
-                //            output[displayIndex + 1] = colorData[ci + 1];
-                //            output[displayIndex + 2] = colorData[ci + 2];
-                //            output[displayIndex + 3] = 0xff;
-                //        }
-
-                //    }
-                //}
+                    ++colorIndex;
+                }
 
                 newDepthFrame = false;
             }
         }
     }
 
+    Thread colorOnDepthThread;
+    bool runColorOnDepthThread = true;
+    bool newColorOnDepthFrame = false;
+    private void renderColorOnDepthThread() {
+        while ( runColorOnDepthThread ) {
+            if ( newColorOnDepthFrame ) {
+                newColorOnDepthFrame = false;
+
+                mapper.MapDepthFrameToColorSpace( depthData, points );
+                Array.Clear( output, 0, output.Length );
+                for ( var y = 0; y < DEPTH_HEIGHT; y++ ) {
+                    for ( var x = 0; x < DEPTH_WIDTH; x++ ) {
+                        int depthIndex = x + ( y * DEPTH_WIDTH );
+                        var cPoint = points[depthIndex];
+                        int colorX = (int)Math.Floor( cPoint.X + 0.5 );
+                        int colorY = (int)Math.Floor( cPoint.Y + 0.5 );
+
+                        if ( ( colorX >= 0 ) && ( colorX < COLOR_WIDTH ) && ( colorY >= 0 ) && ( colorY < COLOR_HEIGHT ) ) {
+                            int ci = ( ( colorY * COLOR_WIDTH ) + colorX ) * 4;
+                            int displayIndex = depthIndex * 4;
+
+                            output[displayIndex + 0] = colorData[ci];
+                            output[displayIndex + 1] = colorData[ci + 1];
+                            output[displayIndex + 2] = colorData[ci + 2];
+                            output[displayIndex + 3] = 0xff;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    public void ToggleColorFrame() {
+        recordColorFrame = !recordColorFrame;
+
+        ColorPlane.SetActive( recordColorFrame );
+    }
+
+    public void ToggleDepthFrame() {
+        recordDepthFrame = !recordDepthFrame;
+
+        DepthPlane.SetActive( recordDepthFrame );
+
+        if ()
+    }
+
     unsafe void Reader_MultiSourceFrameArrived( object sender, MultiSourceFrameArrivedEventArgs e ) {
         currentFrame++;
-        if ( currentFrame % SaveEveryXFrame != 0 ) return;
+        if ( currentFrame % saveEveryXFrame != 0 ) return;
 
         var frame = e.FrameReference.AcquireFrame();
         if ( frame == null ) return;
@@ -151,13 +194,15 @@ public class Recorder : MonoBehaviour {
         using ( var depthFrame = frame.DepthFrameReference.AcquireFrame() ) {
             depthFrame.CopyFrameDataToArray( depthData );
 
-            newDepthFrame = true;
-
             DepthTexture.LoadRawTextureData( depthPixelData );
             DepthTexture.Apply();
 
             TrackedColorTexture.LoadRawTextureData( output );
             TrackedColorTexture.Apply();
+
+            newDepthFrame = true;
+            
+            newColorOnDepthFrame = true;
         }
 
         using ( var indexFrame = frame.BodyIndexFrameReference.AcquireFrame() ) {
@@ -175,20 +220,25 @@ public class Recorder : MonoBehaviour {
     }
 
     void Update() {
-        if ( Input.GetKeyDown( KeyCode.Space ) ) {
-            if ( Queue != null ) {
-                Queue.SoftStop();
-                Queue = null;
+    }
 
-                Debug.Log( "Stopping recorder" );
-            } else {
-                Queue = new SaveQueue( mapper );
-
-                Debug.Log( "started recorder" );
-            }
-
-
+    public void StartRecording( string path ) {
+        if ( Queue != null ) {
+            Debug.LogError( "Already recording!" );
+            return;
         }
+
+        Queue = new SaveQueue( path, mapper );
+    }
+
+    public void StopRecording() {
+        if ( Queue == null ) {
+            Debug.LogError( "Already stopped!" );
+            return;
+        }
+
+        Queue.SoftStop();
+        Queue = null;
     }
 
     void OnApplicationQuit() {
@@ -198,7 +248,7 @@ public class Recorder : MonoBehaviour {
         Thread.Sleep( 100 );
 
         reader.Dispose();
-        sensor.Close();        
+        sensor.Close();
     }
 }
 
@@ -347,7 +397,6 @@ public class TrackedColorSaver : RecordingSaver<ushort> {
                     output[displayIndex + 2] = colorFrame[colorIndex + 2];
                     output[displayIndex + 3] = 0xff;
                 }
-
             }
         }
 
@@ -360,7 +409,7 @@ public class TrackedColorSaver : RecordingSaver<ushort> {
 }
 
 public class SaveQueue {
-    public static string BASE_PATH = @"C:\Recordings";
+    public string BasePath = @"C:\Recordings";
 
     public string CurrentPath;
 
@@ -373,9 +422,13 @@ public class SaveQueue {
     private ArrayPool<ushort> depthPool;
     private ArrayPool<byte> indexPool;
 
-    public SaveQueue( CoordinateMapper mapper ) {
-        if ( !Directory.Exists( BASE_PATH ) ) Directory.CreateDirectory( BASE_PATH );
-        CurrentPath = Path.Combine( BASE_PATH, DateTime.Now.ToString().Replace( ':', '_' ).Replace( '/', '_' ) );
+    public SaveQueue( string path, CoordinateMapper mapper ) {
+        if ( !String.IsNullOrEmpty( path ) ) {
+            BasePath = path;
+        }
+
+        if ( !Directory.Exists( BasePath ) ) Directory.CreateDirectory( BasePath );
+        CurrentPath = Path.Combine( BasePath, DateTime.Now.ToString().Replace( ':', '_' ).Replace( '/', '_' ) );
         Directory.CreateDirectory( CurrentPath );
 
         color = new ColorSaver( CurrentPath );
@@ -383,9 +436,9 @@ public class SaveQueue {
         index = new IndexSaver( CurrentPath );
         tracked = new TrackedColorSaver( CurrentPath, mapper );
 
-        colorPool = new ArrayPool<byte>( Recorder.COLOR_SIZE, 50 );
-        depthPool = new ArrayPool<ushort>( Recorder.DEPTH_LENGTH, 50 );
-        indexPool = new ArrayPool<byte>( Recorder.DEPTH_LENGTH, 50 );
+        colorPool = new ArrayPool<byte>( Recorder.COLOR_SIZE, 10 );
+        depthPool = new ArrayPool<ushort>( Recorder.DEPTH_LENGTH, 10 );
+        indexPool = new ArrayPool<byte>( Recorder.INDEX_LENGTH, 10 );
     }
 
     public void AddFrame( byte[] colorData, ushort[] depthData, byte[] indexData ) {
