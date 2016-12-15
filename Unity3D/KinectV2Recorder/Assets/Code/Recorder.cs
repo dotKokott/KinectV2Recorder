@@ -113,7 +113,9 @@ public class Recorder : MonoBehaviour {
     ushort maxDepth = 4500;
     private void renderDepthFrame() {
         while ( runDepthThread ) {
-            if ( newDepthFrame ) {
+            if ( recordDepthFrame && newDepthFrame ) {
+                newDepthFrame = false;
+
                 int colorIndex = 0;
                 for ( int depthIndex = 0; depthIndex < depthData.Length; ++depthIndex ) {
                     ushort depth = depthData[depthIndex];
@@ -124,10 +126,10 @@ public class Recorder : MonoBehaviour {
                     depthPixelData[colorIndex++] = intensity; // Red
 
                     ++colorIndex;
-                }
-
-                newDepthFrame = false;
+                }                
             }
+
+            Thread.Sleep( 1 );
         }
     }
 
@@ -136,7 +138,7 @@ public class Recorder : MonoBehaviour {
     bool newColorOnDepthFrame = false;
     private void renderColorOnDepthThread() {
         while ( runColorOnDepthThread ) {
-            if ( newColorOnDepthFrame ) {
+            if ( newColorOnDepthFrame && recordColorOnDepthFrame ) {
                 newColorOnDepthFrame = false;
 
                 mapper.MapDepthFrameToColorSpace( depthData, points );
@@ -160,21 +162,33 @@ public class Recorder : MonoBehaviour {
                     }
                 }
             }
+
+            Thread.Sleep( 1 );
         }
     }
 
-    public void ToggleColorFrame() {
+    public void ToggleColorStream() {
         recordColorFrame = !recordColorFrame;
 
         ColorPlane.SetActive( recordColorFrame );
     }
 
-    public void ToggleDepthFrame() {
+    public void ToggleDepthStream() {
         recordDepthFrame = !recordDepthFrame;
 
         DepthPlane.SetActive( recordDepthFrame );
+    }
 
-        if ()
+    public void ToggleIndexStream() {
+        recordIndexFrame = !recordIndexFrame;
+
+        IndexPlane.SetActive( recordIndexFrame );
+    }
+
+    public void ToggleColorOnDepthStream() {
+        recordColorOnDepthFrame = !recordColorOnDepthFrame;
+
+        ColorOnDepthPlane.SetActive( recordColorOnDepthFrame );
     }
 
     unsafe void Reader_MultiSourceFrameArrived( object sender, MultiSourceFrameArrivedEventArgs e ) {
@@ -184,32 +198,42 @@ public class Recorder : MonoBehaviour {
         var frame = e.FrameReference.AcquireFrame();
         if ( frame == null ) return;
 
-        using ( var colorFrame = frame.ColorFrameReference.AcquireFrame() ) {
-            colorFrame.CopyConvertedFrameDataToArray( colorData, ColorImageFormat.Rgba );
+        if ( recordColorFrame ) {
+            using ( var colorFrame = frame.ColorFrameReference.AcquireFrame() ) {
+                colorFrame.CopyConvertedFrameDataToArray( colorData, ColorImageFormat.Rgba );
 
-            ColorTexture.LoadRawTextureData( colorData );
-            ColorTexture.Apply();
+                ColorTexture.LoadRawTextureData( colorData );
+                ColorTexture.Apply();
+            }
         }
 
-        using ( var depthFrame = frame.DepthFrameReference.AcquireFrame() ) {
-            depthFrame.CopyFrameDataToArray( depthData );
+        if ( recordDepthFrame || recordColorOnDepthFrame ) {
+            using ( var depthFrame = frame.DepthFrameReference.AcquireFrame() ) {
+                depthFrame.CopyFrameDataToArray( depthData );
 
-            DepthTexture.LoadRawTextureData( depthPixelData );
-            DepthTexture.Apply();
+                if ( recordDepthFrame ) {
+                    DepthTexture.LoadRawTextureData( depthPixelData );
+                    DepthTexture.Apply();
+                }
 
-            TrackedColorTexture.LoadRawTextureData( output );
-            TrackedColorTexture.Apply();
+                if ( recordColorOnDepthFrame ) {
+                    TrackedColorTexture.LoadRawTextureData( output );
+                    TrackedColorTexture.Apply();
+                }
 
-            newDepthFrame = true;
-            
-            newColorOnDepthFrame = true;
+                newDepthFrame = true;
+
+                newColorOnDepthFrame = true;
+            }
         }
 
-        using ( var indexFrame = frame.BodyIndexFrameReference.AcquireFrame() ) {
-            indexFrame.CopyFrameDataToArray( indexData );
+        if ( recordIndexFrame ) {
+            using ( var indexFrame = frame.BodyIndexFrameReference.AcquireFrame() ) {
+                indexFrame.CopyFrameDataToArray( indexData );
 
-            BodyIndexTexture.LoadRawTextureData( indexData );
-            BodyIndexTexture.Apply();
+                BodyIndexTexture.LoadRawTextureData( indexData );
+                BodyIndexTexture.Apply();
+            }
         }
 
         frame = null;
@@ -301,10 +325,7 @@ public abstract class RecordingSaver<T> {
 
 public class ColorSaver : RecordingSaver<byte> {
 
-    private System.Random rand = new System.Random();
-
     public ColorSaver( string path ) : base( path, "COLOR" ) {
-
     }
 
     public override void saveNextFrame() {

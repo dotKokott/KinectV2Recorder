@@ -25,10 +25,10 @@ public class UIManager : MonoBehaviour {
     }
 
     void Update() {
-
+        var fps = string.IsNullOrEmpty( FramesPerSecondInput.text ) ? 0 : int.Parse( FramesPerSecondInput.text );
+        fps = Mathf.Clamp( fps, 0, 30 );
+        Recorder.SaveXFramesPerSecond = fps;
     }
-
-
 
     public void OnRecordButtonClick() {
         if ( !IsRecording ) {
@@ -44,18 +44,18 @@ public class UIManager : MonoBehaviour {
     }
 
     public void ColorToggleChanged() {
-
+        Recorder.ToggleColorStream();
     }
 
     public void DepthToggleChanged() {
-
+        Recorder.ToggleDepthStream();
     }
 
     public void BodyIndexToggleChanged() {
-
+        Recorder.ToggleIndexStream();
     }
 
     public void ColorOnDepthToggleChanged() {
-
+        Recorder.ToggleColorOnDepthStream();
     }
 }
