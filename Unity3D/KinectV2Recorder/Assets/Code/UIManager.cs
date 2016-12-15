@@ -40,6 +40,7 @@ public class UIManager : MonoBehaviour {
             }            
         } else {
             RecordButtonText.text = "Saving...";
+            Recorder.StopRecording();
         }
     }
 

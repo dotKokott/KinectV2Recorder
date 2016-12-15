@@ -239,7 +239,12 @@ public class Recorder : MonoBehaviour {
         frame = null;
 
         if ( Queue != null ) {
-            Queue.AddFrame( colorData, depthData, indexData );
+            var color = recordColorFrame ? colorData : null;
+            var depth = recordDepthFrame || recordColorOnDepthFrame ? depthData : null;
+            var index = recordIndexFrame ? indexData : null;
+
+            //TODO: Rework this
+            Queue.AddFrame( color, depth, index );
         }
     }
 
@@ -443,6 +448,7 @@ public class SaveQueue {
     private ArrayPool<ushort> depthPool;
     private ArrayPool<byte> indexPool;
 
+    //TODO configure which ones you want to have in save queue
     public SaveQueue( string path, CoordinateMapper mapper ) {
         if ( !String.IsNullOrEmpty( path ) ) {
             BasePath = path;
@@ -457,12 +463,12 @@ public class SaveQueue {
         index = new IndexSaver( CurrentPath );
         tracked = new TrackedColorSaver( CurrentPath, mapper );
 
-        colorPool = new ArrayPool<byte>( Recorder.COLOR_SIZE, 10 );
+        colorPool = new ArrayPool<byte>( Recorder.COLOR_SIZE, 30 );
         depthPool = new ArrayPool<ushort>( Recorder.DEPTH_LENGTH, 10 );
         indexPool = new ArrayPool<byte>( Recorder.INDEX_LENGTH, 10 );
     }
 
-    public void AddFrame( byte[] colorData, ushort[] depthData, byte[] indexData ) {
+    public void AddFrame( byte[] colorData, ushort[] depthData, byte[] indexData ) {                       
         var _color = colorPool.RequestResource( 2 );
         colorData.CopyTo( _color.Resource, 0 );
         color.Frames.Enqueue( _color );
