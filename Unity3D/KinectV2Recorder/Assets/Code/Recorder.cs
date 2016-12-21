@@ -250,13 +250,14 @@ public class Recorder : MonoBehaviour {
     void Update() {
     }
 
-    public void StartRecording( string path ) {
+    public SaveQueue StartRecording( string path ) {
         if ( Queue != null ) {
             Debug.LogError( "Already recording!" );
-            return;
+            return null;
         }
 
         Queue = new SaveQueue( path, mapper, recordColorFrame, recordDepthFrame, recordIndexFrame, recordColorOnDepthFrame );
+        return Queue;
     }
 
     public void StopRecording() {
@@ -339,6 +340,8 @@ public class ColorSaver : RecordingSaver<byte> {
         File.WriteAllBytes( colorFramePath, frame.Resource );
 
         frame.Free();
+
+        Debug.Log( "Color frame saved count: " + Frames.Count );
     }
 }
 
@@ -506,6 +509,15 @@ public class SaveQueue {
         }                              
     }
 
+    public bool FinishedSaving() {
+        if ( color != null && color.Frames.Count > 0 ) return false;
+        if ( depth != null && depth.Frames.Count > 0 ) return false;
+        if ( index != null && index.Frames.Count > 0 ) return false;
+        if ( tracked != null && tracked.Frames.Count > 0 ) return false;
+
+        return true;
+    }
+
     public void AddFrame( byte[] colorData, ushort[] depthData, byte[] indexData ) {
 
         var colorCount = Convert.ToInt32( SaveColor ) + Convert.ToInt32( SaveTracked );
@@ -545,13 +557,10 @@ public class SaveQueue {
     }
 
     public void SoftStop() {
-        if ( colorPool != null ) colorPool.Dispose();
         if ( color != null ) color.SoftStop = true;
-
-        if ( depthPool != null ) depthPool.Dispose();
+        
         if ( depth != null ) depth.SoftStop = true;
 
-        if ( indexPool != null ) indexPool.Dispose();
         if ( index != null ) index.SoftStop = true;
 
         if ( tracked != null ) tracked.SoftStop = true;

@@ -19,6 +19,8 @@ public class UIManager : MonoBehaviour {
 
     public bool IsRecording { get { return Recorder.Queue != null; } }
 
+    public SaveQueue CurrentQueue;
+
     void Start() {
         Recorder = FindObjectOfType<Recorder>();
         RecordButtonText = RecordButton.GetComponentInChildren<Text>();
@@ -28,18 +30,24 @@ public class UIManager : MonoBehaviour {
         var fps = string.IsNullOrEmpty( FramesPerSecondInput.text ) ? 0 : int.Parse( FramesPerSecondInput.text );
         fps = Mathf.Clamp( fps, 0, 30 );
         Recorder.SaveXFramesPerSecond = fps;
+
+        if( RecordButtonText.text == "Saving..." && CurrentQueue.FinishedSaving()) {
+            RecordButtonText.text = "Record";
+            RecordButton.enabled = true;            
+        }
     }
 
     public void OnRecordButtonClick() {
         if ( !IsRecording ) {
             RecordButtonText.text = "Stop recording";
             if ( Directory.Exists( PathInput.text ) ) {
-                Recorder.StartRecording( PathInput.text );
+                CurrentQueue = Recorder.StartRecording( PathInput.text );
             } else {
                 Debug.LogErrorFormat( "{0} is not a valid directory", PathInput.text );
             }            
         } else {
             RecordButtonText.text = "Saving...";
+            RecordButton.enabled = false;
             Recorder.StopRecording();
         }
     }
