@@ -243,7 +243,6 @@ public class Recorder : MonoBehaviour {
             var depth = recordDepthFrame || recordColorOnDepthFrame ? depthData : null;
             var index = recordIndexFrame ? indexData : null;
 
-            //TODO: Rework this
             Queue.AddFrame( color, depth, index );
         }
     }
@@ -257,7 +256,7 @@ public class Recorder : MonoBehaviour {
             return;
         }
 
-        Queue = new SaveQueue( path, mapper );
+        Queue = new SaveQueue( path, mapper, recordColorFrame, recordDepthFrame, recordIndexFrame, recordColorOnDepthFrame );
     }
 
     public void StopRecording() {
@@ -434,6 +433,14 @@ public class TrackedColorSaver : RecordingSaver<ushort> {
     }
 }
 
+[Flags]
+public enum SaveOutputs {
+    Color,
+    Depth,
+    Index,
+    TrackedColor
+}
+
 public class SaveQueue {
     public string BasePath = @"C:\Recordings";
 
@@ -448,8 +455,22 @@ public class SaveQueue {
     private ArrayPool<ushort> depthPool;
     private ArrayPool<byte> indexPool;
 
+    public bool SaveColor = true;
+    public bool SaveDepth = true;
+    public bool SaveIndex = true;
+    public bool SaveTracked = true;
+
+    public const int COLOR_POOL_SIZE = 30;
+    public const int DEPTH_POOL_SIZE = 10;
+    public const int INDEX_POOL_SIZE = 10;
+
     //TODO configure which ones you want to have in save queue
-    public SaveQueue( string path, CoordinateMapper mapper ) {
+    public SaveQueue( string path, CoordinateMapper mapper, bool saveColor, bool saveDepth, bool saveIndex, bool saveTracked ) {
+        SaveColor = saveColor;
+        SaveDepth = saveDepth;
+        SaveIndex = saveIndex;
+        SaveTracked = saveTracked;
+
         if ( !String.IsNullOrEmpty( path ) ) {
             BasePath = path;
         }
@@ -458,48 +479,97 @@ public class SaveQueue {
         CurrentPath = Path.Combine( BasePath, DateTime.Now.ToString().Replace( ':', '_' ).Replace( '/', '_' ) );
         Directory.CreateDirectory( CurrentPath );
 
-        color = new ColorSaver( CurrentPath );
-        depth = new DepthSaver( CurrentPath );
-        index = new IndexSaver( CurrentPath );
-        tracked = new TrackedColorSaver( CurrentPath, mapper );
-
-        colorPool = new ArrayPool<byte>( Recorder.COLOR_SIZE, 30 );
-        depthPool = new ArrayPool<ushort>( Recorder.DEPTH_LENGTH, 10 );
-        indexPool = new ArrayPool<byte>( Recorder.INDEX_LENGTH, 10 );
+        
+        if(SaveColor || SaveTracked) {
+            if(SaveColor) {
+                color = new ColorSaver( CurrentPath );
+            }
+            
+            colorPool = new ArrayPool<byte>( Recorder.COLOR_SIZE, COLOR_POOL_SIZE );
+        }
+        
+        if(SaveDepth || SaveTracked) {
+            if(SaveDepth) {
+                depth = new DepthSaver( CurrentPath );
+            }
+            
+            depthPool = new ArrayPool<ushort>( Recorder.DEPTH_LENGTH, DEPTH_POOL_SIZE );
+        }
+        
+        if(SaveIndex) {
+            index = new IndexSaver( CurrentPath );
+            indexPool = new ArrayPool<byte>( Recorder.INDEX_LENGTH, INDEX_POOL_SIZE );
+        }
+        
+        if(SaveTracked) {
+            tracked = new TrackedColorSaver( CurrentPath, mapper );
+        }                              
     }
 
-    public void AddFrame( byte[] colorData, ushort[] depthData, byte[] indexData ) {                       
-        var _color = colorPool.RequestResource( 2 );
-        colorData.CopyTo( _color.Resource, 0 );
-        color.Frames.Enqueue( _color );
+    public void AddFrame( byte[] colorData, ushort[] depthData, byte[] indexData ) {
 
-        var _depth = depthPool.RequestResource( 2 );
-        depthData.CopyTo( _depth.Resource, 0 );
-        depth.Frames.Enqueue( _depth );
+        var colorCount = Convert.ToInt32( SaveColor ) + Convert.ToInt32( SaveTracked );
+        var depthCount = Convert.ToInt32( SaveDepth ) + Convert.ToInt32( SaveTracked );
 
-        var _index = indexPool.RequestResource( 1 );
-        indexData.CopyTo( _index.Resource, 0 );
-        index.Frames.Enqueue( _index );
+        PoolEntry<byte> _color = null;
+        PoolEntry<ushort> _depth = null;
 
-        tracked.AddFrame( _depth, _color );
+        if(SaveColor || SaveTracked) {
+            _color = colorPool.RequestResource( colorCount );
+            colorData.CopyTo( _color.Resource, 0 );
+
+            if(SaveColor) {
+                color.Frames.Enqueue( _color );
+            }
+        }
+
+        
+        if(SaveDepth || SaveTracked) {
+            _depth = depthPool.RequestResource( depthCount );
+            depthData.CopyTo( _depth.Resource, 0 );
+            
+            if(SaveDepth) {
+                depth.Frames.Enqueue( _depth );
+            }
+        }
+
+        if(SaveTracked) {
+            tracked.AddFrame( _depth, _color );
+        }
+
+        if(SaveIndex) {
+            var _index = indexPool.RequestResource( 1 );
+            indexData.CopyTo( _index.Resource, 0 );
+            index.Frames.Enqueue( _index );
+        }        
     }
 
     public void SoftStop() {
-        colorPool.Dispose();
-        depthPool.Dispose();
-        indexPool.Dispose();
+        if ( colorPool != null ) colorPool.Dispose();
+        if ( color != null ) color.SoftStop = true;
 
-        color.SoftStop = depth.SoftStop = index.SoftStop = tracked.SoftStop = true;
+        if ( depthPool != null ) depthPool.Dispose();
+        if ( depth != null ) depth.SoftStop = true;
+
+        if ( indexPool != null ) indexPool.Dispose();
+        if ( index != null ) index.SoftStop = true;
+
+        if ( tracked != null ) tracked.SoftStop = true;
 
         GC.Collect();
     }
 
     public void HardStop() {
-        colorPool.Dispose();
-        depthPool.Dispose();
-        indexPool.Dispose();
+        if ( colorPool != null ) colorPool.Dispose();
+        if ( color != null ) color.HardStop = true;
 
-        color.HardStop = depth.HardStop = index.HardStop = tracked.HardStop = true;
+        if ( depthPool != null ) depthPool.Dispose();
+        if ( depth != null ) depth.HardStop = true;
+
+        if ( indexPool != null ) indexPool.Dispose();
+        if ( index != null ) index.HardStop = true;
+
+        if ( tracked != null ) tracked.HardStop = true;
 
         GC.Collect();
     }
