@@ -24,8 +24,6 @@ if (os.path.isfile(colorFile)):
     plt.imshow(color)
     plt.title('Original color 1920x1080')
 
-
-
 #DEPTH
 depthFile = os.path.join(recording_path, 'DEPTH', '%d.uint16' % frame)
 if (os.path.isfile(depthFile)):
@@ -61,6 +59,6 @@ if (os.path.isfile(trackedFile)):
     tracked.shape = (424, 512, 4)
     plt.subplot(2, 2, 4)
     plt.imshow(tracked)
-    pltself.title('Color mapped to tracked depth space 512x424')
+    plt.title('Color mapped to tracked depth space 512x424')
 
 plt.show()
